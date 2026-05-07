@@ -1,0 +1,19 @@
+# Virtual environment
+picklerick_venv/
+venv/
+
+# Secrets - IMPORTANT: never commit your API key
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Streamlit
+.streamlit/*
+!.streamlit/config.toml
+
+# macOS junk
+.DS_Store
