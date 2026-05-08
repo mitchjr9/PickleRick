@@ -23,6 +23,7 @@ from pathlib import Path
 # ── Third-party ───────────────────────────────────────────────────────────────
 import anthropic
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ── OpenCV — auto-install if missing ─────────────────────────────────────────
 try:
@@ -2311,6 +2312,171 @@ _s("tenq_finished", False)
 _s("tenq_answered_this", False)
 _s("tenq_user_answer", None)
 _s("quiz_log", [])
+_s("is_premium", False)  # Premium toggle — flips to True for paid users (no ads)
+
+
+# =============================================================================
+# ADS & PREMIUM TIER — Google AdSense integration
+# =============================================================================
+# Pickle Rick is freemium: free tier shows ads, premium tier (planned $5–10/mo)
+# is ad-free. AdSense IDs are read from st.secrets so they can be set per
+# deployment without code changes. While the IDs are placeholders or missing,
+# the ad slots render nothing (no broken iframes during AdSense approval wait).
+
+# Placeholder values — replaced with real ones via st.secrets["adsense"].*
+_ADSENSE_PLACEHOLDER_PUB = "ca-pub-XXXXXXXXXXXXXXXX"
+_ADSENSE_PLACEHOLDER_SLOT = "0000000000"
+
+
+def _get_adsense_config() -> dict:
+    """
+    Resolve AdSense IDs from st.secrets with safe fallbacks. Set these in
+    .streamlit/secrets.toml or in the Streamlit Cloud dashboard:
+
+        [adsense]
+        publisher_id = "ca-pub-1234567890123456"
+        top_slot_id = "1234567890"
+        footer_slot_id = "0987654321"
+        # Optional: link to your "Go Premium" Stripe / Gumroad checkout
+        premium_url = "https://buy.stripe.com/your-link"
+    """
+    cfg = {
+        "publisher_id": _ADSENSE_PLACEHOLDER_PUB,
+        "top_slot_id": _ADSENSE_PLACEHOLDER_SLOT,
+        "footer_slot_id": _ADSENSE_PLACEHOLDER_SLOT,
+        "premium_url": "",
+    }
+    try:
+        secrets_block = st.secrets.get("adsense", {}) if hasattr(st.secrets, "get") else {}
+        for k in cfg.keys():
+            if secrets_block and k in secrets_block:
+                cfg[k] = str(secrets_block[k])
+    except Exception:
+        pass  # secrets.toml may not exist yet — fall back to placeholders
+    return cfg
+
+
+def _ads_configured() -> bool:
+    """True only when both publisher and top slot are real (non-placeholder)."""
+    cfg = _get_adsense_config()
+    return (
+        cfg["publisher_id"] != _ADSENSE_PLACEHOLDER_PUB
+        and cfg["publisher_id"].startswith("ca-pub-")
+        and cfg["top_slot_id"] != _ADSENSE_PLACEHOLDER_SLOT
+    )
+
+
+def _show_ads() -> bool:
+    """Ads render only when the user is on the free tier AND IDs are real."""
+    return (not st.session_state.get("is_premium", False)) and _ads_configured()
+
+
+def show_top_banner_ad() -> None:
+    """Top banner — placed below the hero, before chat content."""
+    if not _show_ads():
+        return
+    cfg = _get_adsense_config()
+    try:
+        components.html(
+            f"""
+            <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"
+                    crossorigin="anonymous"></script>
+            <ins class="adsbygoogle"
+                 style="display:block; margin: 12px auto; max-width: 728px;"
+                 data-ad-client="{cfg['publisher_id']}"
+                 data-ad-slot="{cfg['top_slot_id']}"
+                 data-ad-format="auto"
+                 data-full-width-responsive="true"></ins>
+            <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
+            """,
+            height=120,
+        )
+    except Exception:
+        pass  # Never let an ad failure break the app
+
+
+def show_footer_ad() -> None:
+    """Smaller footer ad — placed above the site footer."""
+    if not _show_ads():
+        return
+    cfg = _get_adsense_config()
+    try:
+        components.html(
+            f"""
+            <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"
+                    crossorigin="anonymous"></script>
+            <ins class="adsbygoogle"
+                 style="display:block; margin: 8px auto; max-width: 468px;"
+                 data-ad-client="{cfg['publisher_id']}"
+                 data-ad-slot="{cfg['footer_slot_id']}"
+                 data-ad-format="auto"
+                 data-full-width-responsive="true"></ins>
+            <script>(adsbygoogle = window.adsbygoogle || []).push({{}});</script>
+            """,
+            height=110,
+        )
+    except Exception:
+        pass
+
+
+def show_ad_disclosure() -> None:
+    """Friendly note shown below ads — only when ads are actually being rendered."""
+    if not _show_ads():
+        return
+    st.markdown(
+        f"""
+        <p style="text-align:center; font-size:0.72rem; color:{MUTED};
+                  margin: 4px 0 12px 0; font-style: italic;">
+            Ads help keep Pickle Rick free for everyone 🥒
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def show_premium_cta_sidebar() -> None:
+    """Small 'Go Premium' button in the sidebar — only for free-tier users."""
+    if st.session_state.get("is_premium", False):
+        return  # Already premium — don't pitch
+    cfg = _get_adsense_config()
+    premium_url = cfg.get("premium_url", "").strip()
+
+    st.markdown("---")
+    if premium_url:
+        # Real checkout link configured — show as styled link button
+        st.markdown(
+            f"""
+            <a href="{premium_url}" target="_blank" rel="noopener" style="
+                display:block; text-align:center; padding:10px 14px;
+                background:{GREEN_DARK}; color:white !important;
+                border-radius:8px; font-weight:700; font-size:0.92rem;
+                text-decoration:none; margin: 4px 0;
+                box-shadow: 0 2px 6px rgba(21,128,61,0.25);">
+                ⭐ Go Premium · Remove Ads
+            </a>
+            <p style="text-align:center; font-size:0.72rem; color:{MUTED};
+                      margin: 4px 0 0 0;">
+                $5/mo — supports Pickle Rick
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        # No checkout link yet — show "coming soon" placeholder
+        st.markdown(
+            f"""
+            <div style="text-align:center; padding:8px 12px;
+                        background:#FFFBEB; border:1px dashed {AMBER};
+                        border-radius:8px; font-size:0.82rem; color:{TEXT};">
+                ⭐ <strong>Premium tier coming soon</strong><br>
+                <span style="font-size:0.72rem; color:{MUTED};">
+                    Ad-free Pickle Rick · $5/mo
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 
 
 # =============================================================================
@@ -3076,6 +3242,9 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
+    # Premium tier CTA — sits at the very bottom of the sidebar
+    show_premium_cta_sidebar()
+
 
 # =============================================================================
 # HEADER (logo + title)
@@ -3092,6 +3261,10 @@ st.markdown(f"""
     <div class="pr-hero-slogan">Your Pickleball Rules Assistant — USAPA-trained, ref-grade precision.</div>
 </div>
 """, unsafe_allow_html=True)
+
+# Top banner ad — renders only for free-tier users when AdSense IDs are configured
+show_top_banner_ad()
+show_ad_disclosure()
 
 
 # =============================================================================
@@ -3643,6 +3816,9 @@ with tab_quiz:
 # =============================================================================
 # FOOTER
 # =============================================================================
+
+# Footer ad — renders only for free-tier users when AdSense IDs are configured
+show_footer_ad()
 
 st.markdown(f"""
 <div class="pr-footer">
