@@ -2356,12 +2356,28 @@ def _get_adsense_config() -> dict:
     return cfg
 
 
-def _ads_configured() -> bool:
-    """True only when both publisher and top slot are real (non-placeholder)."""
+def _publisher_configured() -> bool:
+    """
+    True when a real publisher ID is set. Used by inject_adsense_head_script()
+    for site-verification — the publisher ID alone is sufficient for Google
+    to verify domain ownership, even before ad-unit slot IDs exist.
+    """
     cfg = _get_adsense_config()
     return (
         cfg["publisher_id"] != _ADSENSE_PLACEHOLDER_PUB
         and cfg["publisher_id"].startswith("ca-pub-")
+    )
+
+
+def _ads_configured() -> bool:
+    """
+    True only when publisher AND ad-unit slot IDs are real. Used by the
+    actual ad-rendering functions, since rendering an <ins> tag without
+    a real slot ID produces a broken empty ad container.
+    """
+    cfg = _get_adsense_config()
+    return (
+        _publisher_configured()
         and cfg["top_slot_id"] != _ADSENSE_PLACEHOLDER_SLOT
     )
 
@@ -2436,8 +2452,8 @@ def inject_adsense_head_script() -> None:
     Idempotent — uses a session flag + DOM check to avoid double injection
     across Streamlit re-runs.
     """
-    if not _ads_configured():
-        return  # Placeholder IDs — nothing to inject
+    if not _publisher_configured():
+        return  # No real publisher ID — nothing to inject
 
     # Avoid duplicate injection on Streamlit re-runs within the same session
     if st.session_state.get("_adsense_head_injected"):
