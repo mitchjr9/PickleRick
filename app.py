@@ -2341,7 +2341,10 @@ def _get_adsense_config() -> dict:
         premium_url = "https://buy.stripe.com/your-link"
     """
     cfg = {
-        "publisher_id": _ADSENSE_PLACEHOLDER_PUB,
+        # Publisher ID is public (visible in served HTML on every AdSense site),
+        # so hardcoding the default is fine and avoids "secrets not mounted"
+        # surprises on cloud deploys.
+        "publisher_id": "ca-pub-6446144297665494",
         "top_slot_id": _ADSENSE_PLACEHOLDER_SLOT,
         "footer_slot_id": _ADSENSE_PLACEHOLDER_SLOT,
         "premium_url": "",
@@ -2352,7 +2355,7 @@ def _get_adsense_config() -> dict:
             if secrets_block and k in secrets_block:
                 cfg[k] = str(secrets_block[k])
     except Exception:
-        pass  # secrets.toml may not exist yet — fall back to placeholders
+        pass  # secrets.toml may not exist — code-level defaults are sufficient
     return cfg
 
 
