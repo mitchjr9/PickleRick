@@ -2419,6 +2419,64 @@ def show_footer_ad() -> None:
         pass
 
 
+def inject_adsense_head_script() -> None:
+    """
+    Inject the AdSense site-verification script into the page's <head>.
+
+    AdSense's site-verification crawler looks for the adsbygoogle.js script
+    loaded at the page level with the publisher's client ID. Streamlit doesn't
+    let us write directly into <head>, so we use the standard workaround:
+    render a 0-height iframe via components.html, then have a tiny script
+    inside that iframe reach up to the *parent document* (the real Streamlit
+    page) and append the AdSense script to its <head>.
+
+    Net effect: the AdSense script lands in the real <head> of picklerick.io,
+    exactly where Google's verification crawler expects to find it.
+
+    Idempotent — uses a session flag + DOM check to avoid double injection
+    across Streamlit re-runs.
+    """
+    if not _ads_configured():
+        return  # Placeholder IDs — nothing to inject
+
+    # Avoid duplicate injection on Streamlit re-runs within the same session
+    if st.session_state.get("_adsense_head_injected"):
+        return
+    st.session_state["_adsense_head_injected"] = True
+
+    cfg = _get_adsense_config()
+    pub_id = cfg["publisher_id"]
+
+    try:
+        components.html(
+            f"""
+            <script>
+              (function() {{
+                try {{
+                  var doc = (window.parent && window.parent.document) || document;
+                  // Don't double-add if already present
+                  var existing = doc.querySelector(
+                    'script[data-picklerick-adsense="true"]'
+                  );
+                  if (existing) return;
+                  var s = doc.createElement('script');
+                  s.async = true;
+                  s.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client={pub_id}";
+                  s.setAttribute("crossorigin", "anonymous");
+                  s.setAttribute("data-picklerick-adsense", "true");
+                  (doc.head || doc.body).appendChild(s);
+                }} catch (e) {{
+                  console.error("AdSense head injection failed:", e);
+                }}
+              }})();
+            </script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass  # Never let injection failures break the app
+
+
 def show_ad_disclosure() -> None:
     """Friendly note shown below ads — only when ads are actually being rendered."""
     if not _show_ads():
@@ -3123,6 +3181,11 @@ def accuracy_display(correct: int, total: int):
 # =============================================================================
 # SIDEBAR
 # =============================================================================
+
+# AdSense site-verification: inject adsbygoogle.js into the real <head> of the
+# Streamlit page. Runs once per session, before any UI renders, so Google's
+# verification crawler can find it.
+inject_adsense_head_script()
 
 with st.sidebar:
     # Sidebar logo — uses embedded base64 (no file dependency)
