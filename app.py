@@ -11,6 +11,7 @@ Run:  streamlit run app.py
 # ── Standard library ──────────────────────────────────────────────────────────
 import base64
 import datetime
+import hmac
 import json
 import os
 import subprocess
@@ -2313,6 +2314,8 @@ _s("tenq_answered_this", False)
 _s("tenq_user_answer", None)
 _s("quiz_log", [])
 _s("is_premium", False)  # Premium toggle — flips to True for paid users (no ads)
+_s("pr_authenticated", False)   # Password gate — True once correct password entered
+_s("pr_login_attempts", 0)      # Failed login counter (for a friendlier message)
 
 
 # =============================================================================
@@ -3198,6 +3201,105 @@ def accuracy_display(correct: int, total: int):
 
 
 # =============================================================================
+# PASSWORD GATE
+# =============================================================================
+# Simple shared-password gate. Nothing below this point renders until the
+# correct password is entered. Intended for private / pre-launch access —
+# it is a single shared password, not per-user accounts.
+
+
+def _get_app_password() -> str | None:
+    """
+    Resolve the site password, in priority order:
+      1. APP_PASSWORD environment variable    (Render → Environment → Env Var)
+      2. st.secrets["APP_PASSWORD"]           (secrets.toml, top level)
+      3. st.secrets["auth"]["password"]       (secrets.toml, [auth] block)
+
+    Returns None when no password is set anywhere. In that case the gate is
+    skipped entirely and the app stays open — so a missing/unmounted secrets
+    file can never lock you out of your own app.
+    """
+    env_pw = os.environ.get("APP_PASSWORD")
+    if env_pw:
+        return env_pw
+    try:
+        pw = st.secrets["APP_PASSWORD"]
+        if pw:
+            return str(pw)
+    except (KeyError, FileNotFoundError, AttributeError):
+        pass
+    try:
+        pw = st.secrets["auth"]["password"]
+        if pw:
+            return str(pw)
+    except (KeyError, FileNotFoundError, AttributeError):
+        pass
+    return None
+
+
+def require_password() -> None:
+    """
+    Show a centered login card and halt the app until the correct password
+    is entered. No-op if the user is already authenticated for this session,
+    or if no password is configured.
+    """
+    app_pw = _get_app_password()
+    if not app_pw:
+        return  # No password configured — app is open
+    if st.session_state.get("pr_authenticated"):
+        return  # Already unlocked this session
+
+    st.markdown("<div style='height:3vh;'></div>", unsafe_allow_html=True)
+    gate_l, gate_c, gate_r = st.columns([1, 2, 1])
+    with gate_c:
+        st.image(get_picklerick_logo_image(), use_container_width=True)
+        st.markdown(
+            f"""
+            <div style="text-align:center;margin:-6px 0 16px 0;">
+                <div style="font-size:1.9rem;font-weight:800;color:{GREEN_DARK};
+                            line-height:1.15;">Pickle Rick</div>
+                <div style="font-size:0.92rem;color:{MUTED};margin-top:6px;">
+                    🔒 This app is password protected.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.form("pr_login_form", clear_on_submit=True):
+            entered = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter password",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button(
+                "🥒 Enter", use_container_width=True
+            )
+
+        if submitted:
+            # Constant-time comparison — avoids leaking the password via timing
+            ok = hmac.compare_digest(
+                str(entered).encode("utf-8"), str(app_pw).encode("utf-8")
+            )
+            if ok:
+                st.session_state.pr_authenticated = True
+                st.session_state.pr_login_attempts = 0
+                st.rerun()
+            else:
+                st.session_state.pr_login_attempts += 1
+                st.error("Incorrect password — give it another swing.")
+
+        if st.session_state.get("pr_login_attempts", 0) >= 3:
+            st.caption("Trouble getting in? Reach out for the current password.")
+
+    st.stop()  # Nothing below this line runs until authenticated
+
+
+require_password()
+
+
+# =============================================================================
 # SIDEBAR
 # =============================================================================
 
@@ -3323,6 +3425,12 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
+
+    # Lock button — only shown when a password is actually configured
+    if _get_app_password():
+        if st.button("🔒 Lock", use_container_width=True):
+            st.session_state.pr_authenticated = False
+            st.rerun()
 
     # Premium tier CTA — sits at the very bottom of the sidebar
     show_premium_cta_sidebar()
